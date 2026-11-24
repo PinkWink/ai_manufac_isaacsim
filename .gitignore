@@ -1,0 +1,41 @@
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+# 실행할 때마다 생기는 파일
+data/session2/live/
+data/session2/work/
+data/session3/live/
+data/session3/work/
+data/session3/paint_images_raw.npz
+data/session4/live/
+data/session4/work/
+data/session4/robot_log_raw.csv
+# 강사용 정답 (컨플루언스 [강사용] 페이지에 첨부, 공개 저장소에 올리지 않음)
+*answer*
+data/session4/robot_log_truth_raw.csv
+docs/session*/0[0-4]_*.md
+docs/install/install.md
+# 교재 그림·영상 (컨플루언스에만 올림)
+docs/**/img/
+# 3D 에셋 (NVIDIA 에셋 서버에서 받음: ./scripts/factory assets)
+assets/sim/
+# 폐쇄망 설치 묶음
+offline/
+dist/
+
+# 홍보 영상 (컨플루언스·유튜브에만 올림)
+promo/footage/
+promo/stills/
+promo/*.mp4
+
+# 교재 게시 도구와 페이지 목록 (강사 PC 에서만 씀)
+docs/CONFLUENCE.md
+scripts/publish_confluence.py
+scripts/pull_confluence.py
+
+# 교재 원고 · 교재 제작 도구 · 홍보 영상 (공개 저장소에는 PC 를 세팅하는 데 필요한 것만 둠. 교재는 컨플루언스)
+docs/
+promo/
+scripts/make_gifs.sh
+scripts/make_gifs_s2.sh

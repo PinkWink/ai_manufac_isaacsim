@@ -1,0 +1,32 @@
+{
+ "mold_temp_c": {
+  "low": 55.2,
+  "high": 63.0,
+  "recommend": 59.1
+ },
+ "melt_temp_c": {
+  "low": 224.6,
+  "high": 235.9,
+  "recommend": 230.2
+ },
+ "inj_pressure_mpa": {
+  "low": 80.8,
+  "high": 94.5,
+  "recommend": 87.6
+ },
+ "hold_pressure_mpa": {
+  "low": 50.0,
+  "high": 59.4,
+  "recommend": 54.7
+ },
+ "hold_time_s": {
+  "low": 7.7,
+  "high": 8.4,
+  "recommend": 8.0
+ },
+ "cooling_time_s": {
+  "low": 24.6,
+  "high": 29.2,
+  "recommend": 26.9
+ }
+}

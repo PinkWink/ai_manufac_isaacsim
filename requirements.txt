@@ -1,0 +1,10 @@
+# 분석·노트북 환경 (./scripts/factory setup 이 .venv 에 설치함)
+numpy
+pandas
+scikit-learn
+matplotlib
+jupyterlab
+nbformat
+nbclient
+ipykernel
+pillow

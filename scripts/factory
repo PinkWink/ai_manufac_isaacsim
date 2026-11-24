@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# 가상 공장 수업용 실행 도구. 새 터미널에서 어느 폴더에 있든 그대로 실행하면 됨 (환경 설정을 스스로 함).
+#   ./scripts/factory            사용법
+#   ./scripts/factory doctor     환경 점검
+set -e
+WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export AI_MANUFAC_HOME="$WS" PYTHONNOUSERSITE=1          # 이 저장소에서 띄운 프로세스 표시 (stop 이 찾는 기준)
+cd "$WS"
+VENV="$WS/.venv"
+ISAAC="${ISAACSIM_PATH:-$HOME/isaacsim}"
+
+usage() {
+  cat <<'USAGE'
+사용법: ./scripts/factory <명령> [옵션]
+
+  수업
+    session2            2회차 가상 공장 실행 (강사 PC · Isaac Sim 필요)
+    session3            3회차 가상 공장 실행
+    session4            4회차 가상 공장 실행
+    notebook 2-1        실습 노트북 열기 (2-1 · 2-2 · 2-3 · 3-0 · 3-1 · 3-2 · 3-3 · 4-1)
+    fetch <강사 PC 주소>  강사 PC 의 가상 공장이 방금 기록한 데이터 받기 (같은 내부망)
+    stop                남아 있는 가상 공장 · 노트북 프로그램 끝내기
+
+  준비
+    setup               분석 환경 설치 (.venv 생성, 처음 한 번 · offline/ 묶음이 있으면 인터넷 없이 설치)
+    doctor              환경 점검
+    isaacsim            Isaac Sim 5.1 내려받아 설치 (강사 PC · 인터넷 필요 · 8.8GB)
+    assets              가상 공장의 3D 에셋(UR5e 로봇 · 공장 건물) 받기 (강사 PC · 인터넷 필요 · 처음 한 번)
+    data                실습 데이터와 노트북 다시 만들기 (--answers: 강사용 정답 파일도)
+    pack                폐쇄망 PC 용 설치 묶음 만들기  → dist/ai_manufac_offline_<날짜>.tar.gz
+
+  교재 제작 (교재 원고 폴더 docs/ 가 있는 PC 에서만)
+    capture <회차>      교재용 화면 캡처        → docs/session<회차>/img
+    record <회차> <폴더> 교재용 영상 프레임 촬영 → scripts/make_gifs.sh 로 변환
+    figures             교재용 카드 그림 그리기 → docs/session*/img
+    dataset3            3회차 도장 검사 이미지를 가상 공장에서 다시 촬영
+
+  기타
+    exec <명령...>      분석 환경에서 명령 실행
+    shell               분석 환경이 켜진 셸
+USAGE
+}
+
+need_venv() {
+  [[ -x "$VENV/bin/python" ]] || { echo '분석 환경(.venv)이 없습니다. 먼저 실행: ./scripts/factory setup' >&2; exit 1; }
+}
+need_isaac() {
+  [[ -x "$ISAAC/python.sh" ]] || {
+    echo "Isaac Sim 을 찾지 못했습니다: $ISAAC/python.sh" >&2
+    echo '다른 곳에 설치했다면: ISAACSIM_PATH=<설치 폴더> ./scripts/factory session2' >&2; exit 1; }
+}
+no_leftover() {   # 가상 공장이 두 개 뜨면 GPU 메모리가 모자라고 기록 파일이 섞임
+  if [[ "${FACTORY_SKIP_PROC_CHECK:-0}" != 1 ]] && ! python3 "$WS/scripts/factory_procs.py" --sim >&2; then
+    echo '위 가상 공장이 이미 실행 중입니다. 정리: ./scripts/factory stop  (그 뒤 다시 실행)' >&2; exit 1
+  fi
+}
+
+command="${1:-help}"; if [[ $# -gt 0 ]]; then shift; fi
+case "$command" in
+  help|-h|--help) usage;;
+  setup)
+    command -v python3 >/dev/null || { echo 'python3 가 없습니다: sudo apt install python3 python3-venv' >&2; exit 1; }
+    pyv="$(python3 -c 'import sys; print("%d%d" % sys.version_info[:2])')"
+    wheels="$WS/offline/wheels/cp$pyv"; pipopt=()
+    if [[ -d "$wheels" ]]; then                       # 폐쇄망: 묶음에 들어 있는 패키지로 설치 (인터넷 사용 안 함)
+      echo "오프라인 설치: offline/wheels/cp$pyv"
+      pipopt=(--no-index --find-links "$wheels")
+    elif [[ -d "$WS/offline/wheels" ]]; then
+      echo "이 PC 의 파이썬(${pyv:0:1}.${pyv:1})에 맞는 묶음이 없습니다. 들어 있는 버전: $(ls "$WS/offline/wheels" | tr '\n' ' ')" >&2
+      echo '인터넷이 되는 PC 에서 다시 만들기: PY_VERSIONS="'"${pyv:0:1}.${pyv:1}"'" ./scripts/factory pack' >&2; exit 1
+    fi
+    if [[ ! -x "$VENV/bin/python" ]]; then
+      if ! python3 -m venv "$VENV" >/dev/null 2>&1; then          # python3-venv 가 없는 PC: pip 을 묶음에서 직접 넣음
+        rm -rf "$VENV"
+        pipwhl="$(ls "$wheels"/pip-*.whl 2>/dev/null | head -1)"
+        [[ -n "$pipwhl" ]] && python3 -m venv --without-pip "$VENV" \
+          || { rm -rf "$VENV"; echo 'venv 를 만들지 못했습니다: sudo apt install python3-venv' >&2; exit 1; }
+        "$VENV/bin/python" "$pipwhl/pip" install --quiet "${pipopt[@]}" pip
+      fi
+    fi
+    [[ ${#pipopt[@]} -gt 0 ]] || "$VENV/bin/python" -m pip install --quiet --upgrade pip
+    "$VENV/bin/python" -m pip install --quiet "${pipopt[@]}" -r "$WS/requirements.txt"
+    [[ -f "$WS/data/session2/injection_shots_raw.csv" ]] || "$VENV/bin/python" "$WS/session2/make_dataset.py" >/dev/null
+    echo '설치 완료. 점검: ./scripts/factory doctor';;
+  pack)                                               # 폐쇄망 PC 에 들고 갈 설치 묶음 (인터넷이 되는 PC 에서 실행)
+    need_venv
+    vers="${PY_VERSIONS:-3.10 3.12}"; stage="$WS/dist/ai_manufac"
+    rm -rf "$WS/dist"; mkdir -p "$stage/offline/wheels"
+    [[ -x "$VENV/bin/uv" ]] || "$VENV/bin/python" -m pip install --quiet uv
+    for v in $vers; do
+      echo "파이썬 $v 용 패키지 내려받는 중..."
+      # 대상 파이썬 기준으로 필요한 패키지 목록을 먼저 확정함 (내려받는 PC 의 파이썬과 달라도 빠지는 것이 없도록)
+      "$VENV/bin/uv" pip compile --quiet "$WS/requirements.txt" --python-version "$v" \
+        --python-platform x86_64-manylinux_2_28 --only-binary :all: -o "$WS/dist/lock-$v.txt"
+      "$VENV/bin/python" -m pip download --quiet --no-deps -r "$WS/dist/lock-$v.txt" pip -d "$stage/offline/wheels/cp${v/./}" \
+        --only-binary=:all: --python-version "$v" --implementation cp \
+        --platform manylinux2014_x86_64 --platform manylinux_2_17_x86_64 --platform manylinux_2_28_x86_64
+      cp "$WS/dist/lock-$v.txt" "$stage/offline/wheels/cp${v/./}/requirements.lock.txt"
+    done
+    # 수강생 배포본: 정답 · 강사용 원고 · 교재 그림 · 실행 중 생긴 파일은 넣지 않음
+    tar -C "$WS" -cf - --exclude='__pycache__' --exclude='.ipynb_checkpoints' --exclude='*answer*' --exclude='paint_images_raw.npz' --exclude='robot_log_raw.csv' --exclude='robot_log_truth_raw.csv' \
+        --exclude='live' --exclude='work' --exclude='assets/sim' README.md requirements.txt scripts common session2 session3 session4 data assets \
+      | tar -C "$stage" -xf -
+    out="$WS/dist/ai_manufac_offline_$(date +%Y%m%d).tar.gz"
+    tar -C "$WS/dist" -czf "$out" ai_manufac && rm -rf "$stage"
+    echo "묶음 완성: $out ($(du -h "$out" | cut -f1), 파이썬 $vers)"
+    echo '폐쇄망 PC 에서:  tar -xzf <묶음> -C ~  &&  cd ~/ai_manufac  &&  ./scripts/factory setup';;
+  doctor) exec python3 "$WS/scripts/doctor.py" "$@";;
+  fetch) exec python3 "$WS/scripts/fetch_live.py" "$@";;
+  isaacsim)                                           # Isaac Sim 5.1 내려받아 설치 (강사 PC · 인터넷 필요 · 8.8GB)
+    url="https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip"
+    if [[ -x "$ISAAC/python.sh" ]]; then echo "Isaac Sim 이 이미 있습니다: $ISAAC"; exit 0; fi
+    command -v curl >/dev/null && command -v unzip >/dev/null || { echo '필요한 도구가 없습니다: sudo apt install curl unzip' >&2; exit 1; }
+    free_gb=$(df -BG --output=avail "$HOME" | tail -1 | tr -dc '0-9')
+    [[ "$free_gb" -ge 35 ]] || { echo "디스크 여유가 모자랍니다: ${free_gb}GB (35GB 이상 필요)" >&2; exit 1; }
+    zip="${ISAACSIM_ZIP:-$HOME/isaac-sim-standalone-5.1.0-linux-x86_64.zip}"   # 미리 받아 둔 파일이 있으면 ISAACSIM_ZIP 으로 지정
+    echo "내려받는 중 (8.8GB, 끊기면 다시 실행하면 이어 받음): $zip"
+    curl -L --fail -C - -o "$zip" "$url"
+    echo "압축 푸는 중: $ISAAC (약 21GB)"
+    mkdir -p "$ISAAC" && unzip -q -o "$zip" -d "$ISAAC"
+    (cd "$ISAAC" && ./post_install.sh >/dev/null 2>&1 || true)
+    [[ -x "$ISAAC/python.sh" ]] && echo "설치 완료: $ISAAC   (압축 파일은 지워도 됨: $zip)" || { echo '설치를 확인하지 못했습니다' >&2; exit 1; };;
+  assets) need_isaac; exec "$ISAAC/python.sh" "$WS/scripts/fetch_assets.py" "$@";;
+  stop) exec python3 "$WS/scripts/factory_procs.py" --kill;;
+  session2|s2|session3|s3|session4|s4)
+    n="${command: -1}"
+    need_isaac; no_leftover
+    if [[ "$n" != 2 && ! -f "$WS/assets/sim/warehouse/warehouse.usd" ]] || [[ "$n" == 4 && ! -f "$WS/assets/sim/ur5e/ur5e.usd" ]]; then
+      echo "3D 에셋(UR5e 로봇 · 공장 건물)이 없습니다. 먼저 실행: ./scripts/factory assets   (인터넷 필요, 처음 한 번)" >&2; exit 1
+    fi
+    exec "$ISAAC/python.sh" "$WS/session$n/run_session$n.py" "$@";;
+  capture)
+    n="${1:-2}"
+    [[ -f "$WS/session$n/run_session$n.py" ]] || { echo '사용법: ./scripts/factory capture <회차: 2 · 3 · 4>' >&2; exit 2; }
+    need_isaac; no_leftover
+    exec "$ISAAC/python.sh" "$WS/session$n/run_session$n.py" --capture "$WS/docs/session$n/img";;
+  record)
+    n="${1:-}"; dir="${2:-}"
+    [[ -n "$dir" && -f "$WS/session$n/run_session$n.py" ]] || { echo '사용법: ./scripts/factory record <회차> <프레임을 저장할 폴더> [--clips 이름,이름]' >&2; exit 2; }
+    shift 2
+    need_isaac; no_leftover
+    exec "$ISAAC/python.sh" "$WS/session$n/run_session$n.py" --record "$dir" "$@";;
+  dataset3)
+    need_isaac; no_leftover; need_venv
+    "$ISAAC/python.sh" "$WS/session3/run_session3.py" --dataset "$WS/data/session3"
+    exec "$VENV/bin/python" "$WS/session3/make_dataset.py";;
+  notebook|nb)
+    need_venv
+    nb="$(ls "$WS"/session*/notebooks/"${1:-none}"_*.ipynb 2>/dev/null | head -1)"
+    [[ -n "$nb" ]] || { echo '사용법: ./scripts/factory notebook <번호>     번호: 2-1 · 2-2 · 2-3 · 3-0 · 3-1 · 3-2 · 3-3 · 4-1' >&2; exit 2; }
+    shift
+    exec "$VENV/bin/jupyter" lab "$nb" "$@";;
+  data)
+    need_venv
+    for f in "$WS"/session*/make_dataset.py "$WS"/scripts/make_notebooks_*.py; do "$VENV/bin/python" "$f" "$@"; done;;
+  figures) need_venv; for f in "$WS"/docs/session*/draw_figures_s*.py; do "$VENV/bin/python" "$f"; done;;
+  exec) need_venv; source "$VENV/bin/activate"; exec "$@";;
+  shell) need_venv; source "$VENV/bin/activate"; echo "분석 환경 셸 (끝내기: exit)"; exec bash --noprofile --norc;;
+  *) echo "모르는 명령: $command" >&2; usage >&2; exit 2;;
+esac
