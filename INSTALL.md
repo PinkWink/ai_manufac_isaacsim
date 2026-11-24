@@ -17,7 +17,7 @@
 
 ```bash
 cd ~
-git clone <이 저장소 주소> ai_manufac
+git clone https://github.com/PinkWink/ai_manufac_isaacsim.git ai_manufac
 cd ~/ai_manufac
 ./scripts/factory setup      # 분석 환경(.venv)을 이 폴더 안에 설치. 관리자 암호 필요 없음
 ./scripts/factory doctor     # "분석 환경" 과 "실습 자료" 가 모두 ✅ 이면 완료
@@ -60,7 +60,7 @@ sudo ubuntu-drivers install
 
 ```bash
 cd ~
-git clone <이 저장소 주소> ai_manufac
+git clone https://github.com/PinkWink/ai_manufac_isaacsim.git ai_manufac
 cd ~/ai_manufac
 ./scripts/factory setup
 ```
