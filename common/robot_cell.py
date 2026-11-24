@@ -103,7 +103,7 @@ class RobotCell:
         self.tau = np.zeros(6)
         self.vacuum = 0.0
         self.speed_pct, self.speed_limit = 60.0, 100.0
-        self.torque_limit = 110.0              # J2 토크 임계 (N·m)
+        self.torque_limit = 80.0               # J2 토크 임계 (N·m)
         self.level = 3                         # 제어 수준 1 · 2 · 3
         self.auto = False                      # 자동으로 다음 부품을 처리
         self.estop, self.trip = False, ""      # 비상 정지, 인터록 정지 사유
@@ -268,12 +268,13 @@ class RobotCell:
         for j, (r, z) in enumerate(((0.019, 0.094), (0.024, 0.104), (0.019, 0.114), (0.026, 0.124))):      # 주름 패드
             k.cyl(tp + f"/Bellows{j}", r, 0.010, (0, 0, z), mat=dark)
         self.cup = k.cyl(tp + "/Cup", 0.03, 0.012, (0, 0, TOOL_LEN - 0.006), color=(0.15, 0.15, 0.16))
+        # 손목 관절의 구동 감쇠를 올림: 에셋 기본값은 빈 손목 기준이라, 흡착 툴과 부품을 달면 빠른 동작에서 손목이 흔들림
+        for name, gain in (("wrist_1_joint", 12.0), ("wrist_2_joint", 12.0), ("wrist_3_joint", 12.0), ("shoulder_pan_joint", 4.0),
+                           ("shoulder_lift_joint", 4.0), ("elbow_joint", 2.0)):
+            d = UsdPhysics.DriveAPI.Get(self.stage.GetPrimAtPath(f"{p}/joints/{name}"), "angular")
+            d.GetDampingAttr().Set(float(d.GetDampingAttr().Get()) * gain if float(d.GetDampingAttr().Get()) > 0.5 else 20.0)
         self.wrist_mass = UsdPhysics.MassAPI.Apply(self.stage.GetPrimAtPath(p + "/wrist_3_link"))
         self._set_payload(0.0)
-        if not self.stage.GetPrimAtPath("/World/PhysicsScene"):
-            scene = UsdPhysics.Scene.Define(self.stage, "/World/PhysicsScene")
-            scene.CreateGravityDirectionAttr(Gf.Vec3f(0, 0, -1))
-            scene.CreateGravityMagnitudeAttr(9.81)
 
     def _set_payload(self, kg):
         self.wrist_mass.GetMassAttr().Set(float(WRIST_KG + TOOL_KG + kg))
@@ -340,7 +341,7 @@ class RobotCell:
             self.checks["range"] = True
             self.msg = f"인터록: 동작 범위 밖 지령 거부  ({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f})"
             return False
-        self.moves.append(dict(q=np.array(self.ik(*pos)), phase=phase, on_done=on_done, speed=speed))
+        self.moves.append(dict(q=np.array(self.ik(*pos)), p=np.array(pos, dtype=float), phase=phase, on_done=on_done, speed=speed))
         return True
 
     def _begin_move(self):
@@ -351,7 +352,10 @@ class RobotCell:
             self.checks["speed"] = True
             self.msg = f"인터록: 속도 상한 {self.speed_limit:.0f}% 로 제한"
         m["q0"] = self.q_cmd.copy()
-        m["T"] = max(float(np.abs(m["q"] - m["q0"]).max()) / (90.0 * pct / 100.0), 0.15)     # 100% = 초당 90도
+        m["p0"] = np.array(self.fk(m["q0"]))            # 흡착 패드가 직선으로 움직이도록 시작 위치를 기억
+        dist = float(np.linalg.norm(m["p"] - m["p0"]))
+        # 100% = 관절 초당 90도 · 흡착 패드 초당 0.5 m 중 느린 쪽에 맞춤
+        m["T"] = max(float(np.abs(m["q"] - m["q0"]).max()) / (90.0 * pct / 100.0), dist / (0.5 * pct / 100.0), 0.15)
         m["t"] = 0.0
         self.move, self.phase = m, m["phase"]
 
@@ -548,7 +552,9 @@ class RobotCell:
                 m["t"] += dt_
                 u = min(m["t"] / m["T"], 1.0)
                 s = u * u * (3 - 2 * u)
-                self.q_cmd = m["q0"] + (m["q"] - m["q0"]) * s
+                # 흡착 패드 끝을 직선으로 옮기며 매 순간 역기구학을 풂 → 패드가 항상 아래를 향함
+                q = self.ik(*(m["p0"] + (m["p"] - m["p0"]) * s)) if u < 1.0 else m["q"]
+                self.q_cmd = np.array(q) if q is not None else m["q0"] + (m["q"] - m["q0"]) * s
                 if u >= 1.0:
                     self.move = None
                     if m["on_done"]:
@@ -558,6 +564,7 @@ class RobotCell:
         if self.robot is not None:
             self._set_targets()
             self.q = np.degrees(self.robot.get_joint_positions())
+            self.track_err = np.maximum(getattr(self, 'track_err', np.zeros(6)), np.abs(self.q - self.q_cmd))
             tau = self.robot.get_measured_joint_efforts()
             if tau is not None:
                 self.tau = 0.7 * self.tau + 0.3 * np.asarray(tau, dtype=float)       # 표시용으로 조금 평활

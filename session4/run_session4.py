@@ -199,7 +199,7 @@ class Panel:
         with self.section("judge", "2단계 판단: 부하 변화와 토크 이상 점수", collapsed=True):
             with ui.VStack(spacing=3, height=0):
                 ui.Label("J2 어깨 토크 (N·m, 최근 약 13초)", height=18, style={"color": GRAY})
-                self.tau_plot = ui.Plot(ui.Type.LINE, -150.0, 10.0, *self.tau_hist, height=70,
+                self.tau_plot = ui.Plot(ui.Type.LINE, -100.0, 10.0, *self.tau_hist, height=70,
                                         style={"color": 0xFF66DD66, "background_color": 0xFF202020})
                 ui.Label("다음 부품의 무게", height=20, style={"color": GRAY})
                 with ui.HStack(height=28, spacing=4):
@@ -253,7 +253,7 @@ class Panel:
             with ui.VStack(spacing=3, height=0):
                 self.slider("speed", "속도 지령 (%)", 10.0, 200.0, cell.speed_pct, lambda v: setattr(cell, "speed_pct", v), step=5.0)
                 self.slider("speed_limit", "속도 상한 (%)", 30.0, 150.0, cell.speed_limit, lambda v: setattr(cell, "speed_limit", v), step=5.0)
-                self.slider("torque_limit", "J2 토크 임계 (N·m)", 60.0, 160.0, cell.torque_limit, lambda v: setattr(cell, "torque_limit", v), step=0.5)
+                self.slider("torque_limit", "J2 토크 임계 (N·m)", 30.0, 140.0, cell.torque_limit, lambda v: setattr(cell, "torque_limit", v), step=0.5)
                 with ui.HStack(height=28, spacing=4):
                     ui.Button("범위 밖 지령 보내기", clicked_fn=lambda: cell.goto(rc.OUT_OF_RANGE, "범위 밖 지령"))
                     ui.Button(f"과부하 부품 투입 ({rc.OVERLOAD_KG:.0f} kg)", clicked_fn=lambda: self.set_next(rc.OVERLOAD_KG))
@@ -376,10 +376,15 @@ if args.probe:                                      # 개발용: 부품 무게�
     runner.run(120)
     cell.torque_limit, cell.torque_ng_rate = 999.0, 0.0
     for kg in (None, None, None, rc.HEAVY_KG[0], rc.HEAVY_KG[1], rc.OVERLOAD_KG):
-        t0 = cell.t
+        t0 = cell.t; cell.track_err = np.zeros(6)
         one_cycle("none", kg)
+        print('PROBE track err deg', np.round(cell.track_err, 1), flush=True)
         f = cell.cycles[-1]["feat"]
         print(f"PROBE kg {cell.payload_kg:.2f}  J2 mean {f[0]:.2f} max {f[1]:.2f}  J3 mean {f[2]:.2f}  cycle {cell.t - t0:.1f}s  ratio {vision.ratio:.2f}  trip '{cell.trip}' msg '{cell.msg}'", flush=True)
+    if args.capture:                                # 동작 중 자세 확인용 연속 촬영
+        set_view("robot"); cell.force_defect = "none"; cell.start_cycle()
+        runner.rec(Path(args.capture) / "probe_seq", 620, 20)
+        wait_idle()
     one_cycle("connector"); print("PROBE ng ratio", round(vision.ratio, 2), cell.counts, flush=True)
     print("PROBE range", cell.goto(rc.OUT_OF_RANGE, "x"), cell.msg, [k for k in rc.TEACH_DEFAULT if cell.ik(*rc.TEACH_DEFAULT[k]) is None], flush=True)
     runner.still(Path(args.capture or "/tmp") / "probe.png") if args.capture else None
